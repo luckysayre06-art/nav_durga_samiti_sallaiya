@@ -1,0 +1,33 @@
+[
+    {
+        "id": "74551d71ac0e4724bc57086e6be77a25",
+        "title": "नवरात्रि महोत्सव",
+        "date": "2026/10/16",
+        "time": "8:00",
+        "place": "new salaiya"
+    },
+    {
+        "title": "भजन एवं कीर्तन",
+        "description": "भक्तों के लिए भजन, कीर्तन और धार्मिक कार्यक्रम।",
+        "id": "3986a1d2acc84398829511d44d0be42e",
+        "date": "",
+        "time": "",
+        "place": ""
+    },
+    {
+        "title": "भंडारा प्रसाद",
+        "description": "सभी भक्तों के लिए प्रसाद एवं भंडारे की व्यवस्था।",
+        "id": "599d3aebc43744678d8153e3dcda4995",
+        "date": "",
+        "time": "",
+        "place": ""
+    },
+    {
+        "id": "program_baac2c49f3b543dfb3aef2c4f32d2b4a",
+        "title": "murti sthapna",
+        "date": "11/10/2026",
+        "time": "morning 9:00am",
+        "place": "new salaiya hanuman mandir",
+        "description": ""
+    }
+]

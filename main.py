@@ -38,8 +38,6 @@ AARTI_FILE = DATA_DIR / "aarti.json"
 ACCOUNT_FILE = DATA_DIR / "accounts.json"
 PROGRAMS_FILE = DATA_DIR / "programs.json"
 
-ADMIN_PASSWORD = "966934"
-
 # =========================================================
 # DEFAULT WEBSITE DATA
 # =========================================================
@@ -179,6 +177,7 @@ def get_secret(name, default=""):
 GITHUB_TOKEN = get_secret("GITHUB_TOKEN", "")
 GITHUB_REPO = get_secret("GITHUB_REPO", "")
 GITHUB_BRANCH = get_secret("GITHUB_BRANCH", "main")
+ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "")
 
 GITHUB_API = "https://api.github.com"
 GITHUB_ENABLED = bool(GITHUB_TOKEN and GITHUB_REPO)

@@ -42,5 +42,5 @@
             "राशि": 1000
         }
     ],
-    "public_donation_amount": true
+    "public_donation_amount": false
 }

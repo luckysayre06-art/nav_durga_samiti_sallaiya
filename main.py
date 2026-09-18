@@ -4,6 +4,7 @@ import json
 import uuid
 import base64
 import requests
+from urllib.parse import quote
 
 # =========================================================
 # PAGE SETUP
@@ -37,7 +38,7 @@ AARTI_FILE = DATA_DIR / "aarti.json"
 ACCOUNT_FILE = DATA_DIR / "accounts.json"
 PROGRAMS_FILE = DATA_DIR / "programs.json"
 
-ADMIN_PASSWORD = "HIMANSHU@786"
+ADMIN_PASSWORD = "966934"
 
 # =========================================================
 # DEFAULT WEBSITE DATA
@@ -767,18 +768,67 @@ elif menu == "🖼️ Gallery":
 
     if gallery_images:
 
+        st.caption("📷 तस्वीर पर क्लिक करें — फोटो बड़े आकार में खुलेगी।")
+
         columns = st.columns(3)
 
-        for index, image_path in enumerate(
-            gallery_images
-        ):
+        for index, image_path in enumerate(gallery_images):
 
             with columns[index % 3]:
 
-                st.image(
-                    str(image_path),
-                    use_container_width=True
-                )
+                try:
+                    image_bytes = image_path.read_bytes()
+                    suffix = image_path.suffix.lower()
+                    mime_type = {
+                        ".png": "image/png",
+                        ".jpg": "image/jpeg",
+                        ".jpeg": "image/jpeg",
+                        ".webp": "image/webp"
+                    }.get(suffix, "application/octet-stream")
+
+                    raw_url = None
+                    if GITHUB_ENABLED:
+                        raw_url = (
+                            f"https://raw.githubusercontent.com/"
+                            f"{GITHUB_REPO}/{quote(GITHUB_BRANCH, safe='')}/"
+                            f"assets/gallery/{quote(image_path.name)}"
+                        )
+
+                    if raw_url:
+                        safe_name = (
+                            image_path.name
+                            .replace("&", "&amp;")
+                            .replace('\"', "&quot;")
+                            .replace("<", "&lt;")
+                            .replace(">", "&gt;")
+                        )
+                        st.markdown(
+                            f"""<a href=\"{raw_url}\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"तस्वीर खोलें\" style=\"display:block; text-decoration:none;\">
+<img src=\"{raw_url}\" alt=\"{safe_name}\" style=\"width:100%; height:260px; object-fit:cover; border-radius:14px; cursor:pointer; display:block;\" />
+</a>""",
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        st.image(
+                            image_bytes,
+                            use_container_width=True
+                        )
+
+                    st.download_button(
+                        "⬇️",
+                        data=image_bytes,
+                        file_name=image_path.name,
+                        mime=mime_type,
+                        key=f"download_gallery_{index}_{image_path.name}",
+                        help="फोटो डाउनलोड करें"
+                    )
+
+                except Exception as error:
+                    st.warning(f"Photo preview में समस्या: {error}")
+                    st.image(
+                        str(image_path),
+                        use_container_width=True
+                    )
 
     else:
 
@@ -945,19 +995,23 @@ elif menu == "💰 हिसाब-किताब":
 
         donation_rows = []
 
+        amount_is_public = accounts.get("public_donation_amount", False)
+
         for number, item in enumerate(
             accounts["donations"],
             start=1
         ):
 
-            amount_is_public = accounts.get("public_donation_amount", False)
-
-        donation_rows.append(
+            donation_rows.append(
                 {
                     "क्र.": number,
                     "👤 नाम": item.get("नाम", ""),
                     "📅 तारीख": item.get("तारीख", ""),
-                    "💰 राशि": f"₹{float(item.get('राशि', 0)):,.0f}" if amount_is_public else "...",
+                    "💰 राशि": (
+                        f"₹{float(item.get('राशि', 0)):,.0f}"
+                        if amount_is_public
+                        else "..."
+                    ),
                     "💳 माध्यम": item.get("माध्यम", "")
                 }
             )

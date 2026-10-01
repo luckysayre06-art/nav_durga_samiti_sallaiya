@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import uuid
 import base64
+import re
 import requests
 from urllib.parse import quote
 
@@ -473,6 +474,96 @@ if "expenses" not in accounts:
 if "public_donation_amount" not in accounts:
     accounts["public_donation_amount"] = False
 
+
+# =========================================================
+# YEAR-WISE ACCOUNTING
+# =========================================================
+
+CURRENT_YEAR = 2026
+ACCOUNT_YEARS = list(range(CURRENT_YEAR, CURRENT_YEAR + 25))
+
+
+def get_entry_year(date_value, fallback_year=CURRENT_YEAR):
+    """Extract a 4-digit year from common date formats."""
+    text = str(date_value or "").strip()
+
+    match = re.search(r"(?<!\\d)(20\\d{2})(?!\\d)", text)
+    if match:
+        return int(match.group(1))
+
+    return fallback_year
+
+
+def ensure_yearwise_accounts(data):
+    """
+    Convert the old flat donations/expenses structure into:
+    accounts["years"][year]["donations"/"expenses"].
+
+    Existing records are preserved and assigned to the year found
+    in their date. If no year is present, they go to 2026.
+    """
+    if not isinstance(data, dict):
+        data = {}
+
+    old_donations = data.get("donations", [])
+    old_expenses = data.get("expenses", [])
+    years = data.get("years", {})
+
+    if not isinstance(years, dict):
+        years = {}
+
+    # Create all selectable years.
+    for year in ACCOUNT_YEARS:
+        key = str(year)
+        if not isinstance(years.get(key), dict):
+            years[key] = {}
+        if not isinstance(years[key].get("donations"), list):
+            years[key]["donations"] = []
+        if not isinstance(years[key].get("expenses"), list):
+            years[key]["expenses"] = []
+
+    # Migrate old flat records only once.
+    if isinstance(old_donations, list) and old_donations:
+        for item in old_donations:
+            year = get_entry_year(item.get("तारीख", ""), CURRENT_YEAR)
+            key = str(year)
+            if key not in years:
+                years[key] = {"donations": [], "expenses": []}
+            years[key]["donations"].append(item)
+
+    if isinstance(old_expenses, list) and old_expenses:
+        for item in old_expenses:
+            year = get_entry_year(item.get("तारीख", ""), CURRENT_YEAR)
+            key = str(year)
+            if key not in years:
+                years[key] = {"donations": [], "expenses": []}
+            years[key]["expenses"].append(item)
+
+    # The new structure is authoritative.
+    data["years"] = years
+    data.pop("donations", None)
+    data.pop("expenses", None)
+
+    if "public_donation_amount" not in data:
+        data["public_donation_amount"] = False
+
+    return data
+
+
+accounts = ensure_yearwise_accounts(accounts)
+save_json(ACCOUNT_FILE, accounts)
+
+
+def get_year_account(year):
+    key = str(year)
+    if key not in accounts["years"]:
+        accounts["years"][key] = {
+            "donations": [],
+            "expenses": []
+        }
+    return accounts["years"][key]
+
+
 # =========================================================
 # SESSION STATE
 # =========================================================
@@ -845,17 +936,32 @@ elif menu == "💰 हिसाब-किताब":
 
     st.title("💰 हिसाब-किताब")
 
+    # हर साल का हिसाब अलग रहेगा।
+    selected_account_year = st.selectbox(
+        "📅 Which year's account would you like to view?",
+        ACCOUNT_YEARS,
+        index=ACCOUNT_YEARS.index(CURRENT_YEAR),
+        format_func=lambda year: f"📅 {year} Account"
+    )
+
+    selected_accounts = get_year_account(selected_account_year)
+
     total_donation = sum(
         float(item.get("राशि", 0) or 0)
-        for item in accounts["donations"]
+        for item in selected_accounts["donations"]
     )
 
     total_expense = sum(
         float(item.get("राशि", 0) or 0)
-        for item in accounts["expenses"]
+        for item in selected_accounts["expenses"]
     )
 
     balance = total_donation - total_expense
+
+    st.info(
+        f"📖 You are currently viewing the complete account statement for {selected_account_year}. "
+        "To view another year, simply select a year from the dropdown above."
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -886,12 +992,12 @@ elif menu == "💰 हिसाब-किताब":
     donation_title_col, donation_button_col = st.columns([6, 1])
 
     with donation_title_col:
-        st.subheader("📥 चंदा")
+        st.subheader(f"📥 {selected_account_year} का चंदा")
 
     with donation_button_col:
         add_donation_public = st.button(
             "➕",
-            key="public_add_donation_button",
+            key=f"public_add_donation_button_{selected_account_year}",
             use_container_width=True
         )
 
@@ -905,24 +1011,28 @@ elif menu == "💰 हिसाब-किताब":
 
         with st.container(border=True):
 
-            st.write("➕ **नया चंदा जोड़ें**")
+            st.write(
+                f"➕ **{selected_account_year} में नया चंदा जोड़ें**"
+            )
             st.info("चंदा जोड़ने के लिए Admin Password डालें।")
 
             public_donation_password = st.text_input(
                 "Admin Password",
                 type="password",
-                key="public_donation_password"
+                key=f"public_donation_password_{selected_account_year}"
             )
 
             if public_donation_password == ADMIN_PASSWORD:
 
-                with st.form("public_donation_form"):
+                with st.form(
+                    f"public_donation_form_{selected_account_year}"
+                ):
 
                     donor_name_public = st.text_input("नाम")
 
                     donor_date_public = st.text_input(
                         "तारीख",
-                        placeholder="जैसे 16-09-2026"
+                        placeholder=f"जैसे 16-09-{selected_account_year}"
                     )
 
                     donor_amount_public = st.number_input(
@@ -942,7 +1052,7 @@ elif menu == "💰 हिसाब-किताब":
                     )
 
                     save_public_donation = st.form_submit_button(
-                        "💾 चंदा सेव करें"
+                        f"💾 {selected_account_year} का चंदा सेव करें"
                     )
 
                     if save_public_donation:
@@ -954,7 +1064,8 @@ elif menu == "💰 हिसाब-किताब":
                             st.warning("राशि 0 से ज्यादा रखें।")
 
                         else:
-                            accounts["donations"].append(
+
+                            selected_accounts["donations"].append(
                                 {
                                     "id": f"donation_{uuid.uuid4().hex}",
                                     "नाम": donor_name_public.strip(),
@@ -970,7 +1081,7 @@ elif menu == "💰 हिसाब-किताब":
                             )
 
                             st.success(
-                                "चंदा सफलतापूर्वक जोड़ दिया गया।"
+                                f"{selected_account_year} का चंदा सफलतापूर्वक जोड़ दिया गया।"
                             )
 
                             st.session_state[
@@ -984,21 +1095,24 @@ elif menu == "💰 हिसाब-किताब":
 
             if st.button(
                 "✖ बंद करें",
-                key="close_public_donation_form"
+                key=f"close_public_donation_form_{selected_account_year}"
             ):
                 st.session_state[
                     "show_public_donation_form"
                 ] = False
                 st.rerun()
 
-    if accounts["donations"]:
+    if selected_accounts["donations"]:
 
         donation_rows = []
 
-        amount_is_public = accounts.get("public_donation_amount", False)
+        amount_is_public = accounts.get(
+            "public_donation_amount",
+            False
+        )
 
         for number, item in enumerate(
-            accounts["donations"],
+            selected_accounts["donations"],
             start=1
         ):
 
@@ -1019,7 +1133,9 @@ elif menu == "💰 हिसाब-किताब":
         st.table(donation_rows)
 
     else:
-        st.info("अभी कोई चंदा दर्ज नहीं है।")
+        st.info(
+            f"{selected_account_year} में अभी कोई चंदा दर्ज नहीं है।"
+        )
 
     st.divider()
 
@@ -1030,12 +1146,12 @@ elif menu == "💰 हिसाब-किताब":
     expense_title_col, expense_button_col = st.columns([6, 1])
 
     with expense_title_col:
-        st.subheader("📤 खर्च")
+        st.subheader(f"📤 {selected_account_year} का खर्च")
 
     with expense_button_col:
         add_expense_public = st.button(
             "➕",
-            key="public_add_expense_button",
+            key=f"public_add_expense_button_{selected_account_year}",
             use_container_width=True
         )
 
@@ -1049,18 +1165,22 @@ elif menu == "💰 हिसाब-किताब":
 
         with st.container(border=True):
 
-            st.write("➕ **नया खर्च जोड़ें**")
+            st.write(
+                f"➕ **{selected_account_year} में नया खर्च जोड़ें**"
+            )
             st.info("खर्च जोड़ने के लिए Admin Password डालें।")
 
             public_expense_password = st.text_input(
                 "Admin Password",
                 type="password",
-                key="public_expense_password"
+                key=f"public_expense_password_{selected_account_year}"
             )
 
             if public_expense_password == ADMIN_PASSWORD:
 
-                with st.form("public_expense_form"):
+                with st.form(
+                    f"public_expense_form_{selected_account_year}"
+                ):
 
                     expense_name_public = st.text_input(
                         "खर्च का नाम"
@@ -1068,7 +1188,7 @@ elif menu == "💰 हिसाब-किताब":
 
                     expense_date_public = st.text_input(
                         "तारीख",
-                        placeholder="जैसे 16-09-2026"
+                        placeholder=f"जैसे 16-09-{selected_account_year}"
                     )
 
                     expense_amount_public = st.number_input(
@@ -1078,7 +1198,7 @@ elif menu == "💰 हिसाब-किताब":
                     )
 
                     save_public_expense = st.form_submit_button(
-                        "💾 खर्च सेव करें"
+                        f"💾 {selected_account_year} का खर्च सेव करें"
                     )
 
                     if save_public_expense:
@@ -1092,7 +1212,8 @@ elif menu == "💰 हिसाब-किताब":
                             )
 
                         else:
-                            accounts["expenses"].append(
+
+                            selected_accounts["expenses"].append(
                                 {
                                     "id": f"expense_{uuid.uuid4().hex}",
                                     "खर्च": expense_name_public.strip(),
@@ -1107,7 +1228,7 @@ elif menu == "💰 हिसाब-किताब":
                             )
 
                             st.success(
-                                "खर्च सफलतापूर्वक जोड़ दिया गया।"
+                                f"{selected_account_year} का खर्च सफलतापूर्वक जोड़ दिया गया।"
                             )
 
                             st.session_state[
@@ -1121,19 +1242,19 @@ elif menu == "💰 हिसाब-किताब":
 
             if st.button(
                 "✖ बंद करें",
-                key="close_public_expense_form"
+                key=f"close_public_expense_form_{selected_account_year}"
             ):
                 st.session_state[
                     "show_public_expense_form"
                 ] = False
                 st.rerun()
 
-    if accounts["expenses"]:
+    if selected_accounts["expenses"]:
 
         expense_rows = []
 
         for number, item in enumerate(
-            accounts["expenses"],
+            selected_accounts["expenses"],
             start=1
         ):
 
@@ -1149,7 +1270,9 @@ elif menu == "💰 हिसाब-किताब":
         st.table(expense_rows)
 
     else:
-        st.info("अभी कोई खर्च दर्ज नहीं है।")
+        st.info(
+            f"{selected_account_year} में अभी कोई खर्च दर्ज नहीं है।"
+        )
 
     st.divider()
 
@@ -1157,7 +1280,7 @@ elif menu == "💰 हिसाब-किताब":
     # FINAL SUMMARY
     # =========================================================
 
-    st.subheader("📊 हिसाब का सारांश")
+    st.subheader(f"📊 {selected_account_year} के हिसाब का सारांश")
 
     summary_col1, summary_col2, summary_col3 = st.columns(3)
 
@@ -2004,14 +2127,72 @@ elif menu == "🔐 Admin Panel":
                 )
 
         # =================================================
-        # ACCOUNT EDIT
+        # ACCOUNT EDIT - YEAR WISE
         # =================================================
 
         with admin_tab5:
 
             st.subheader(
-                "💰 हिसाब-किताब Manage करें"
+                "💰 साल के हिसाब से हिसाब-किताब Manage करें"
             )
+
+            st.info(
+                "यहाँ हर साल का चंदा और खर्च अलग-अलग रहेगा। "
+                "साल चुनकर उसी साल का हिसाब Add, Edit, Save और Delete कर सकते हैं।"
+            )
+
+            admin_account_year = st.selectbox(
+                "📅 किस साल का हिसाब Edit करना है?",
+                ACCOUNT_YEARS,
+                index=ACCOUNT_YEARS.index(CURRENT_YEAR),
+                format_func=lambda year: f"📅 {year} का हिसाब",
+                key="admin_account_year"
+            )
+
+            admin_year_accounts = get_year_account(
+                admin_account_year
+            )
+
+            # =================================================
+            # YEAR SUMMARY
+            # =================================================
+
+            admin_total_donation = sum(
+                float(item.get("राशि", 0) or 0)
+                for item in admin_year_accounts["donations"]
+            )
+
+            admin_total_expense = sum(
+                float(item.get("राशि", 0) or 0)
+                for item in admin_year_accounts["expenses"]
+            )
+
+            admin_balance = (
+                admin_total_donation
+                - admin_total_expense
+            )
+
+            summary1, summary2, summary3 = st.columns(3)
+
+            with summary1:
+                st.metric(
+                    f"📥 {admin_account_year} चंदा",
+                    f"₹{admin_total_donation:,.0f}"
+                )
+
+            with summary2:
+                st.metric(
+                    f"📤 {admin_account_year} खर्च",
+                    f"₹{admin_total_expense:,.0f}"
+                )
+
+            with summary3:
+                st.metric(
+                    f"💵 {admin_account_year} बाकी",
+                    f"₹{admin_balance:,.0f}"
+                )
+
+            st.divider()
 
             account_tab1, account_tab2 = st.tabs(
                 [
@@ -2027,7 +2208,7 @@ elif menu == "🔐 Admin Panel":
             with account_tab1:
 
                 with st.form(
-                    "donation_form"
+                    f"donation_form_{admin_account_year}"
                 ):
 
                     donor_name = st.text_input(
@@ -2036,7 +2217,7 @@ elif menu == "🔐 Admin Panel":
 
                     donor_date = st.text_input(
                         "तारीख",
-                        placeholder="जैसे 16-09-2026"
+                        placeholder=f"जैसे 16-09-{admin_account_year}"
                     )
 
                     donor_amount = st.number_input(
@@ -2056,7 +2237,7 @@ elif menu == "🔐 Admin Panel":
                     )
 
                     add_donation = st.form_submit_button(
-                        "➕ चंदा जोड़ें"
+                        f"➕ {admin_account_year} में चंदा जोड़ें"
                     )
 
                     if add_donation:
@@ -2075,7 +2256,7 @@ elif menu == "🔐 Admin Panel":
 
                         else:
 
-                            accounts["donations"].append(
+                            admin_year_accounts["donations"].append(
                                 {
                                     "id":
                                     f"donation_{uuid.uuid4().hex}",
@@ -2100,7 +2281,7 @@ elif menu == "🔐 Admin Panel":
                             )
 
                             st.success(
-                                "चंदा add हो गया।"
+                                f"{admin_account_year} का चंदा add हो गया।"
                             )
 
                             st.rerun()
@@ -2112,7 +2293,7 @@ elif menu == "🔐 Admin Panel":
             with account_tab2:
 
                 with st.form(
-                    "expense_form"
+                    f"expense_form_{admin_account_year}"
                 ):
 
                     expense_name = st.text_input(
@@ -2121,7 +2302,7 @@ elif menu == "🔐 Admin Panel":
 
                     expense_date = st.text_input(
                         "तारीख",
-                        placeholder="जैसे 16-09-2026"
+                        placeholder=f"जैसे 16-09-{admin_account_year}"
                     )
 
                     expense_amount = st.number_input(
@@ -2131,7 +2312,7 @@ elif menu == "🔐 Admin Panel":
                     )
 
                     add_expense = st.form_submit_button(
-                        "➕ खर्च जोड़ें"
+                        f"➕ {admin_account_year} में खर्च जोड़ें"
                     )
 
                     if add_expense:
@@ -2150,7 +2331,7 @@ elif menu == "🔐 Admin Panel":
 
                         else:
 
-                            accounts["expenses"].append(
+                            admin_year_accounts["expenses"].append(
                                 {
                                     "id":
                                     f"expense_{uuid.uuid4().hex}",
@@ -2172,7 +2353,7 @@ elif menu == "🔐 Admin Panel":
                             )
 
                             st.success(
-                                "खर्च add हो गया।"
+                                f"{admin_account_year} का खर्च add हो गया।"
                             )
 
                             st.rerun()
@@ -2184,245 +2365,255 @@ elif menu == "🔐 Admin Panel":
             # =================================================
 
             st.subheader(
-                "📥 चंदा Edit / Delete"
+                f"📥 {admin_account_year} का चंदा Edit / Delete"
             )
 
-            for index, item in enumerate(
-                accounts["donations"]
-            ):
+            if admin_year_accounts["donations"]:
 
-                with st.expander(
-                    f"👤 {item.get('नाम', 'नाम')} "
-                    f"— ₹{float(item.get('राशि', 0)):,.0f}"
+                for index, item in enumerate(
+                    admin_year_accounts["donations"]
                 ):
 
-                    d_name = st.text_input(
-                        "नाम",
-                        value=item.get(
+                    with st.expander(
+                        f"👤 {item.get('नाम', 'नाम')} "
+                        f"— ₹{float(item.get('राशि', 0)):,.0f}"
+                    ):
+
+                        d_name = st.text_input(
                             "नाम",
-                            ""
-                        ),
-                        key=f"d_name_{index}"
-                    )
+                            value=item.get(
+                                "नाम",
+                                ""
+                            ),
+                            key=f"d_name_{admin_account_year}_{index}"
+                        )
 
-                    d_date = st.text_input(
-                        "तारीख",
-                        value=item.get(
+                        d_date = st.text_input(
                             "तारीख",
-                            ""
-                        ),
-                        key=f"d_date_{index}"
-                    )
+                            value=item.get(
+                                "तारीख",
+                                ""
+                            ),
+                            key=f"d_date_{admin_account_year}_{index}"
+                        )
 
-                    d_amount = st.number_input(
-                        "राशि",
-                        min_value=0,
-                        value=int(
-                            float(
-                                item.get(
-                                    "राशि",
-                                    0
+                        d_amount = st.number_input(
+                            "राशि",
+                            min_value=0,
+                            value=int(
+                                float(
+                                    item.get(
+                                        "राशि",
+                                        0
+                                    )
                                 )
-                            )
-                        ),
-                        step=100,
-                        key=f"d_amount_{index}"
-                    )
+                            ),
+                            step=100,
+                            key=f"d_amount_{admin_account_year}_{index}"
+                        )
 
-                    methods = [
-                        "Cash",
-                        "UPI",
-                        "Bank",
-                        "Other"
-                    ]
+                        methods = [
+                            "Cash",
+                            "UPI",
+                            "Bank",
+                            "Other"
+                        ]
 
-                    old_method = item.get(
-                        "माध्यम",
-                        "Cash"
-                    )
+                        old_method = item.get(
+                            "माध्यम",
+                            "Cash"
+                        )
 
-                    if old_method not in methods:
-                        old_method = "Cash"
+                        if old_method not in methods:
+                            old_method = "Cash"
 
-                    d_method = st.selectbox(
-                        "माध्यम",
-                        methods,
-                        index=methods.index(
-                            old_method
-                        ),
-                        key=f"d_method_{index}"
-                    )
+                        d_method = st.selectbox(
+                            "माध्यम",
+                            methods,
+                            index=methods.index(
+                                old_method
+                            ),
+                            key=f"d_method_{admin_account_year}_{index}"
+                        )
 
-                    col1, col2 = st.columns(2)
+                        col1, col2 = st.columns(2)
 
-                    with col1:
+                        with col1:
 
-                        if st.button(
-                            "💾 Save",
-                            key=f"save_donation_{index}"
-                        ):
+                            if st.button(
+                                "💾 Save",
+                                key=f"save_donation_{admin_account_year}_{index}"
+                            ):
 
-                            accounts["donations"][index] = {
-                                "id":
-                                item.get(
-                                    "id",
-                                    f"donation_{uuid.uuid4().hex}"
-                                ),
+                                admin_year_accounts["donations"][index] = {
+                                    "id":
+                                    item.get(
+                                        "id",
+                                        f"donation_{uuid.uuid4().hex}"
+                                    ),
 
-                                "नाम":
-                                d_name,
+                                    "नाम":
+                                    d_name,
 
-                                "तारीख":
-                                d_date,
+                                    "तारीख":
+                                    d_date,
 
-                                "राशि":
-                                d_amount,
+                                    "राशि":
+                                    d_amount,
 
-                                "माध्यम":
-                                d_method
-                            }
+                                    "माध्यम":
+                                    d_method
+                                }
 
-                            save_json(
-                                ACCOUNT_FILE,
-                                accounts
-                            )
+                                save_json(
+                                    ACCOUNT_FILE,
+                                    accounts
+                                )
 
-                            st.success(
-                                "चंदा update हो गया।"
-                            )
+                                st.success(
+                                    f"{admin_account_year} का चंदा update हो गया।"
+                                )
 
-                            st.rerun()
+                                st.rerun()
 
-                    with col2:
+                        with col2:
 
-                        if st.button(
-                            "🗑️ Delete",
-                            key=f"delete_donation_{index}"
-                        ):
+                            if st.button(
+                                "🗑️ Delete",
+                                key=f"delete_donation_{admin_account_year}_{index}"
+                            ):
 
-                            accounts["donations"].pop(
-                                index
-                            )
+                                admin_year_accounts["donations"].pop(
+                                    index
+                                )
 
-                            save_json(
-                                ACCOUNT_FILE,
-                                accounts
-                            )
+                                save_json(
+                                    ACCOUNT_FILE,
+                                    accounts
+                                )
 
-                            st.success(
-                                "चंदा delete हो गया।"
-                            )
+                                st.success(
+                                    f"{admin_account_year} का चंदा delete हो गया।"
+                                )
 
-                            st.rerun()
+                                st.rerun()
+
+            else:
+
+                st.info(
+                    f"{admin_account_year} में अभी कोई चंदा दर्ज नहीं है।"
+                )
 
             # =================================================
             # EXPENSE EDIT
             # =================================================
 
             st.subheader(
-                "📤 खर्च Edit / Delete"
+                f"📤 {admin_account_year} का खर्च Edit / Delete"
             )
 
-            for index, item in enumerate(
-                accounts["expenses"]
-            ):
+            if admin_year_accounts["expenses"]:
 
-                with st.expander(
-                    f"🧾 {item.get('खर्च', 'खर्च')} "
-                    f"— ₹{float(item.get('राशि', 0)):,.0f}"
+                for index, item in enumerate(
+                    admin_year_accounts["expenses"]
                 ):
 
-                    e_name = st.text_input(
-                        "खर्च",
-                        value=item.get(
+                    with st.expander(
+                        f"🧾 {item.get('खर्च', 'खर्च')} "
+                        f"— ₹{float(item.get('राशि', 0)):,.0f}"
+                    ):
+
+                        e_name = st.text_input(
                             "खर्च",
-                            ""
-                        ),
-                        key=f"e_name_{index}"
-                    )
+                            value=item.get(
+                                "खर्च",
+                                ""
+                            ),
+                            key=f"e_name_{admin_account_year}_{index}"
+                        )
 
-                    e_date = st.text_input(
-                        "तारीख",
-                        value=item.get(
+                        e_date = st.text_input(
                             "तारीख",
-                            ""
-                        ),
-                        key=f"e_date_{index}"
-                    )
+                            value=item.get(
+                                "तारीख",
+                                ""
+                            ),
+                            key=f"e_date_{admin_account_year}_{index}"
+                        )
 
-                    e_amount = st.number_input(
-                        "राशि",
-                        min_value=0,
-                        value=int(
-                            float(
-                                item.get(
-                                    "राशि",
-                                    0
+                        e_amount = st.number_input(
+                            "राशि",
+                            min_value=0,
+                            value=int(
+                                float(
+                                    item.get(
+                                        "राशि",
+                                        0
+                                    )
                                 )
-                            )
-                        ),
-                        step=100,
-                        key=f"e_amount_{index}"
-                    )
+                            ),
+                            step=100,
+                            key=f"e_amount_{admin_account_year}_{index}"
+                        )
 
-                    col1, col2 = st.columns(2)
+                        col1, col2 = st.columns(2)
 
-                    with col1:
+                        with col1:
 
-                        if st.button(
-                            "💾 Save",
-                            key=f"save_expense_{index}"
-                        ):
+                            if st.button(
+                                "💾 Save",
+                                key=f"save_expense_{admin_account_year}_{index}"
+                            ):
 
-                            accounts["expenses"][index] = {
-                                "id":
-                                item.get(
-                                    "id",
-                                    f"expense_{uuid.uuid4().hex}"
-                                ),
+                                admin_year_accounts["expenses"][index] = {
+                                    "id":
+                                    item.get(
+                                        "id",
+                                        f"expense_{uuid.uuid4().hex}"
+                                    ),
 
-                                "खर्च":
-                                e_name,
+                                    "खर्च":
+                                    e_name,
 
-                                "तारीख":
-                                e_date,
+                                    "तारीख":
+                                    e_date,
 
-                                "राशि":
-                                e_amount
-                            }
+                                    "राशि":
+                                    e_amount
+                                }
 
-                            save_json(
-                                ACCOUNT_FILE,
-                                accounts
-                            )
+                                save_json(
+                                    ACCOUNT_FILE,
+                                    accounts
+                                )
 
-                            st.success(
-                                "खर्च update हो गया।"
-                            )
+                                st.success(
+                                    f"{admin_account_year} का खर्च update हो गया।"
+                                )
 
-                            st.rerun()
+                                st.rerun()
 
-                    with col2:
+                        with col2:
 
-                        if st.button(
-                            "🗑️ Delete",
-                            key=f"delete_expense_{index}"
-                        ):
+                            if st.button(
+                                "🗑️ Delete",
+                                key=f"delete_expense_{admin_account_year}_{index}"
+                            ):
 
-                            accounts["expenses"].pop(
-                                index
-                            )
+                                admin_year_accounts["expenses"].pop(
+                                    index
+                                )
 
-                            save_json(
-                                ACCOUNT_FILE,
-                                accounts
-                            )
+                                save_json(
+                                    ACCOUNT_FILE,
+                                    accounts
+                                )
 
-                            st.success(
-                                "खर्च delete हो गया।"
-                            )
+                                st.success(
+                                    f"{admin_account_year} का खर्च delete हो गया।"
+                                )
 
-                            st.rerun()
+                                st.rerun()
 
 
 # =========================================================
